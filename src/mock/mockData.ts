@@ -8,7 +8,9 @@ import type {
 } from '../types/api'
 import type {
   FinanceCategory,
+  FinanceDocument,
   FinanceInvoice,
+  FinancePayment,
   FinancePreset,
   FinanceQuotation,
   FinanceSettings,
@@ -33,12 +35,14 @@ export interface MockDatabase {
   financeSettings: FinanceSettings
   financeQuotations: FinanceQuotation[]
   financeInvoices: FinanceInvoice[]
+  financePayments: FinancePayment[]
+  financeDocuments: FinanceDocument[]
   financeTransactions: FinanceTransaction[]
   financeCategories: FinanceCategory[]
   financePresets: FinancePreset[]
 }
 
-const STORAGE_KEY = 'freelanceflow:mock_db_v2'
+const STORAGE_KEY = 'freelanceflow:mock_db_v3'
 
 function getDaysAgo(days: number, timeStr = '09:00:00'): string {
   const d = new Date(Date.now() - days * 86400000)
@@ -68,7 +72,7 @@ export function createInitialMockData(): MockDatabase {
     postalCode: '10110',
     taxId: '1234567890123',
     bio: 'Full-stack Freelance Developer & UI/UX Designer เชี่ยวชาญ React, TypeScript และการจัดการโปรเจกต์ดิจิทัล',
-    role: 'USER',
+    role: 'ADMIN',
     isActive: true,
     createdAt: '2026-01-01T08:00:00Z',
   }
@@ -677,6 +681,106 @@ export function createInitialMockData(): MockDatabase {
       taxIssuedBase: '0.00',
       sourceQuotationId: 'quot-1',
     },
+    {
+      id: 'inv-2',
+      number: 'INV-202610-002',
+      clientId: 'client-2',
+      projectId: 'proj-2',
+      issueDate: getDateStr(8),
+      dueDate: getDateStr(-2),
+      status: 'PAID',
+      subtotal: '25000.00',
+      discount: '0.00',
+      vatRate: '7.00',
+      vat: '1750.00',
+      total: '26750.00',
+      paid: '26750.00',
+      version: 2,
+      lines: [
+        {
+          description: 'งวดสุดท้าย (100%) - ออกแบบ Mobile App Figma UI/UX Design System',
+          quantity: '1',
+          unit: 'งวด',
+          unitPrice: '25000.00',
+          amount: '25000.00',
+        },
+      ],
+      sellerSnapshot: null,
+      buyerSnapshot: null,
+      brandSnapshot: null,
+      note: 'ขอบคุณที่ใช้บริการ ชำระเงินเรียบร้อยแล้ว',
+      taxIssuedBase: '25000.00',
+      sourceQuotationId: 'quot-2',
+    },
+  ]
+
+  const financePayments: FinancePayment[] = [
+    {
+      id: 'pay-1',
+      invoiceId: 'inv-2',
+      date: getDateStr(6),
+      received: '26750.00',
+      withheld: '0.00',
+      method: 'Bank transfer',
+      reference: 'KBANK-TXN-998822',
+      withholdingCertificate: '',
+      cancelled: false,
+      version: 1,
+    },
+  ]
+
+  const sellerSnapshot = JSON.stringify({
+    businessName: financeSettings.businessName,
+    address: financeSettings.address,
+    taxId: financeSettings.taxId,
+    branch: financeSettings.branch,
+  })
+  const buyerSnapshot = JSON.stringify({
+    name: 'สตูดิโอ ดีไซน์ สยาม',
+    companyName: 'Siam Design Studio',
+    taxId: '0105559098765',
+    address: '45/8 ซอยอารีย์ พหลโยธิน 7 กรุงเทพมหานคร 10400',
+  })
+  const brandSnapshot = JSON.stringify({
+    brandColor: financeSettings.brandColor,
+    logoAssetId: null,
+  })
+
+  const financeDocuments: FinanceDocument[] = [
+    {
+      id: 'doc-rc-1',
+      invoiceId: 'inv-2',
+      paymentId: 'pay-1',
+      type: 'RECEIPT',
+      number: 'REC-202610-001',
+      date: getDateStr(6),
+      status: 'ISSUED',
+      baseAmount: '25000.00',
+      vatAmount: '1750.00',
+      description: 'ใบเสร็จรับเงินสำหรับ INV-202610-002',
+      sellerSnapshot,
+      buyerSnapshot,
+      brandSnapshot,
+      replacesId: null,
+      version: 1,
+    },
+    {
+      id: 'doc-tax-1',
+      invoiceId: 'inv-2',
+      paymentId: 'pay-1',
+      type: 'TAX_INVOICE',
+      number: 'TAX-202610-001',
+      date: getDateStr(6),
+      status: 'ISSUED',
+      baseAmount: '25000.00',
+      vatAmount: '1750.00',
+      description: 'ใบกำกับภาษี - ออกแบบ Mobile App Figma UI/UX Design System',
+      sellerSnapshot,
+      buyerSnapshot,
+      brandSnapshot,
+      replacesId: null,
+      version: 1,
+    },
   ]
 
   const financeTransactions: FinanceTransaction[] = [
@@ -765,6 +869,8 @@ export function createInitialMockData(): MockDatabase {
     financeSettings,
     financeQuotations,
     financeInvoices,
+    financePayments,
+    financeDocuments,
     financeTransactions,
     financeCategories,
     financePresets,
@@ -786,6 +892,7 @@ export function loadMockDb(): MockDatabase {
     return {
       ...initial,
       ...parsed,
+      user: { ...initial.user, ...parsed.user, role: 'ADMIN' },
       features: parsed.features || initial.features,
       adminFeatures: parsed.adminFeatures || initial.adminFeatures,
       adminUsers: parsed.adminUsers || initial.adminUsers,
@@ -793,6 +900,8 @@ export function loadMockDb(): MockDatabase {
       financeSettings: parsed.financeSettings || initial.financeSettings,
       financeQuotations: parsed.financeQuotations || initial.financeQuotations,
       financeInvoices: parsed.financeInvoices || initial.financeInvoices,
+      financePayments: parsed.financePayments || initial.financePayments,
+      financeDocuments: parsed.financeDocuments || initial.financeDocuments,
       financeTransactions: parsed.financeTransactions || initial.financeTransactions,
       financeCategories: parsed.financeCategories || initial.financeCategories,
       financePresets: parsed.financePresets || initial.financePresets,

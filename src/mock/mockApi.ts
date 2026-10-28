@@ -1520,70 +1520,300 @@ export async function handleMockRequest<T>(
     return ok(tx) as ApiResponse<T>
   }
 
-  if (pathname === '/finance/payments' && method === 'POST') {
-    const body = parseJsonBody(init)
-    const inv = db.financeInvoices.find((i) => i.id === body.invoiceId)
+  if (pathname === '/finance/payments') {
+    if (method === 'GET') {
+      const page = Math.max(1, Number(query.get('page') || '1'))
+      const limit = Math.max(1, Number(query.get('limit') || '20'))
+      const search = (query.get('search') || '').toLowerCase().trim()
+      const status = query.get('status')
+      const from = query.get('from')
+      const to = query.get('to')
+
+      const filtered = db.financePayments.filter((p) => {
+        if (status === 'ACTIVE' && p.cancelled) return false
+        if (status === 'CANCELLED' && !p.cancelled) return false
+        if (from && p.date < from) return false
+        if (to && p.date > to) return false
+        if (search) {
+          const inv = db.financeInvoices.find((i) => i.id === p.invoiceId)
+          const matches =
+            p.reference.toLowerCase().includes(search) ||
+            p.method.toLowerCase().includes(search) ||
+            (inv?.number || '').toLowerCase().includes(search)
+          if (!matches) return false
+        }
+        return true
+      })
+
+      const total = filtered.length
+      const start = (page - 1) * limit
+      const items = filtered.slice(start, start + limit)
+      return ok(items, {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      }) as ApiResponse<T>
+    }
+
+    if (method === 'POST') {
+      const body = parseJsonBody(init)
+      const inv = db.financeInvoices.find((i) => i.id === body.invoiceId)
+      if (inv) {
+        const newPaid = Number(inv.paid) + Number(body.received || 0)
+        inv.paid = newPaid.toFixed(2)
+        if (newPaid >= Number(inv.total)) {
+          inv.status = 'PAID'
+        } else if (newPaid > 0) {
+          inv.status = 'PARTIALLY_PAID'
+        }
+        inv.version++
+      }
+
+      const payment: FinancePayment = {
+        id: `pay-${Date.now()}`,
+        invoiceId: (body.invoiceId as string) || '',
+        date: (body.date as string) || new Date().toISOString().slice(0, 10),
+        received: Number(body.received || 0).toFixed(2),
+        withheld: Number(body.withheld || 0).toFixed(2),
+        method: (body.method as string) || 'Bank transfer',
+        reference: (body.reference as string) || '',
+        withholdingCertificate: (body.withholdingCertificate as string) || '',
+        cancelled: false,
+        version: 1,
+      }
+      db.financePayments.unshift(payment)
+
+      // Also create receipt document
+      const client = inv ? db.clients.find((c) => c.id === inv.clientId) : undefined
+      const buyerSnapshot = client
+        ? JSON.stringify({
+            name: client.name,
+            companyName: client.companyName || client.name,
+            taxId: client.taxId || '',
+            address: client.address || '',
+          })
+        : '{}'
+      const sellerSnapshot = JSON.stringify({
+        businessName: db.financeSettings.businessName,
+        address: db.financeSettings.address,
+        taxId: db.financeSettings.taxId,
+        branch: db.financeSettings.branch,
+      })
+      const brandSnapshot = JSON.stringify({
+        brandColor: db.financeSettings.brandColor,
+        logoAssetId: db.financeSettings.logoAssetId,
+      })
+
+      db.financeDocuments.unshift({
+        id: `doc-${payment.id}`,
+        invoiceId: payment.invoiceId,
+        paymentId: payment.id,
+        type: 'RECEIPT',
+        number: `REC-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(db.financeDocuments.length + 1).padStart(3, '0')}`,
+        date: payment.date,
+        status: 'ISSUED',
+        baseAmount: payment.received,
+        vatAmount: inv?.vat || '0.00',
+        description: `ใบเสร็จรับเงินสำหรับ ${inv?.number || 'ใบแจ้งหนี้'}`,
+        sellerSnapshot,
+        buyerSnapshot,
+        brandSnapshot,
+        replacesId: null,
+        version: 1,
+      })
+
+      // Also add to transactions as INCOME
+      db.financeTransactions.unshift({
+        id: `tx-pay-${payment.id}`,
+        kind: 'INCOME',
+        date: payment.date,
+        description: `รับชำระเงินใบแจ้งหนี้ ${inv?.number || ''}`,
+        category: 'ค่าบริการพัฒนาซอฟต์แวร์',
+        projectId: inv?.projectId || null,
+        amount: payment.received,
+        paymentId: payment.id,
+        cancelled: false,
+        version: 1,
+      })
+
+      saveMockDb(db)
+      return ok(payment) as ApiResponse<T>
+    }
+  }
+
+  const payCancelMatch = pathname.match(/^\/finance\/payments\/([^/]+)\/cancel$/)
+  if (payCancelMatch && method === 'POST') {
+    const payId = decodeURIComponent(payCancelMatch[1])
+    const payment = db.financePayments.find((p) => p.id === payId)
+    if (!payment) throw { status: 404, message: 'ไม่พบรายการชำระเงิน' }
+    payment.cancelled = true
+    payment.version++
+
+    const receipt = db.financeDocuments.find((d) => d.paymentId === payId && d.type === 'RECEIPT')
+    if (receipt) {
+      receipt.status = 'CANCELLED'
+      receipt.version++
+    }
+
+    const inv = db.financeInvoices.find((i) => i.id === payment.invoiceId)
     if (inv) {
-      const newPaid = Number(inv.paid) + Number(body.received || 0)
+      const newPaid = Math.max(0, Number(inv.paid) - Number(payment.received))
       inv.paid = newPaid.toFixed(2)
-      if (newPaid >= Number(inv.total)) {
-        inv.status = 'PAID'
-      } else if (newPaid > 0) {
+      if (newPaid <= 0) {
+        inv.status = 'ISSUED'
+      } else if (newPaid < Number(inv.total)) {
         inv.status = 'PARTIALLY_PAID'
       }
       inv.version++
     }
 
-    const payment: FinancePayment = {
-      id: `pay-${Date.now()}`,
+    saveMockDb(db)
+    return ok(payment) as ApiResponse<T>
+  }
+
+  if (pathname === '/finance/documents') {
+    if (method === 'GET') {
+      const page = Math.max(1, Number(query.get('page') || '1'))
+      const limit = Math.max(1, Number(query.get('limit') || '20'))
+      const type = query.get('type')
+      const invoiceId = query.get('invoiceId')
+
+      const filtered = db.financeDocuments.filter((d) => {
+        if (type && d.type !== type) return false
+        if (invoiceId && d.invoiceId !== invoiceId) return false
+        return true
+      })
+
+      const total = filtered.length
+      const start = (page - 1) * limit
+      const items = filtered.slice(start, start + limit)
+      return ok(items, {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      }) as ApiResponse<T>
+    }
+  }
+
+  if (pathname === '/finance/tax-invoices' && method === 'POST') {
+    const body = parseJsonBody(init)
+    const inv = db.financeInvoices.find((i) => i.id === body.invoiceId)
+    const client = inv ? db.clients.find((c) => c.id === inv.clientId) : undefined
+    const baseAmount = Number(body.baseAmount || 0).toFixed(2)
+    const vatRate = Number(inv?.vatRate || 7)
+    const vatAmount = (Number(baseAmount) * (vatRate / 100)).toFixed(2)
+
+    const sellerSnapshot = JSON.stringify({
+      businessName: db.financeSettings.businessName,
+      address: db.financeSettings.address,
+      taxId: db.financeSettings.taxId,
+      branch: db.financeSettings.branch,
+    })
+    const buyerSnapshot = client
+      ? JSON.stringify({
+          name: client.name,
+          companyName: client.companyName || client.name,
+          taxId: client.taxId || '',
+          address: client.address || '',
+        })
+      : '{}'
+    const brandSnapshot = JSON.stringify({
+      brandColor: db.financeSettings.brandColor,
+      logoAssetId: db.financeSettings.logoAssetId,
+    })
+
+    const taxDoc: FinanceDocument = {
+      id: `doc-tax-${Date.now()}`,
       invoiceId: (body.invoiceId as string) || '',
+      paymentId: (body.paymentId as string) || null,
+      type: 'TAX_INVOICE',
+      number: `TAX-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(db.financeDocuments.filter((d) => d.type === 'TAX_INVOICE').length + 1).padStart(3, '0')}`,
       date: (body.date as string) || new Date().toISOString().slice(0, 10),
-      received: Number(body.received || 0).toFixed(2),
-      withheld: Number(body.withheld || 0).toFixed(2),
-      method: (body.method as string) || 'TRANSFER',
-      reference: (body.reference as string) || '',
-      withholdingCertificate: (body.withholdingCertificate as string) || '',
-      cancelled: false,
+      status: 'ISSUED',
+      baseAmount,
+      vatAmount,
+      description: (body.description as string) || 'ใบกำกับภาษี',
+      sellerSnapshot,
+      buyerSnapshot,
+      brandSnapshot,
+      replacesId: (body.replacesId as string) || null,
       version: 1,
     }
 
-    // Also add to transactions as INCOME
-    db.financeTransactions.unshift({
-      id: `tx-pay-${payment.id}`,
-      kind: 'INCOME',
-      date: payment.date,
-      description: `รับชำระเงินใบแจ้งหนี้ ${inv?.number || ''}`,
-      category: 'ค่าบริการพัฒนาซอฟต์แวร์',
-      projectId: inv?.projectId || null,
-      amount: payment.received,
-      paymentId: payment.id,
-      cancelled: false,
-      version: 1,
-    })
+    if (body.replacesId) {
+      const oldDoc = db.financeDocuments.find((d) => d.id === body.replacesId)
+      if (oldDoc) {
+        oldDoc.status = 'CANCELLED'
+        oldDoc.version++
+      }
+    }
 
+    if (inv) {
+      const currentIssued = Number(inv.taxIssuedBase || 0)
+      inv.taxIssuedBase = (currentIssued + Number(baseAmount)).toFixed(2)
+      inv.version++
+    }
+
+    db.financeDocuments.unshift(taxDoc)
     saveMockDb(db)
-    return ok(payment) as ApiResponse<T>
+    return ok(taxDoc) as ApiResponse<T>
+  }
+
+  const docCancelMatch = pathname.match(/^\/finance\/documents\/([^/]+)\/cancel$/)
+  if (docCancelMatch && method === 'POST') {
+    const docId = decodeURIComponent(docCancelMatch[1])
+    const doc = db.financeDocuments.find((d) => d.id === docId)
+    if (!doc) throw { status: 404, message: 'ไม่พบเอกสาร' }
+    doc.status = 'CANCELLED'
+    doc.version++
+    saveMockDb(db)
+    return ok(doc) as ApiResponse<T>
   }
 
   const docReceiptMatch = pathname.match(/^\/finance\/documents\/receipt\/([^/]+)$/)
   if (docReceiptMatch && method === 'GET') {
     const paymentId = decodeURIComponent(docReceiptMatch[1])
-    const doc: FinanceDocument = {
-      id: `doc-${paymentId}`,
-      invoiceId: 'inv-1',
-      paymentId,
-      type: 'RECEIPT',
-      number: `REC-${Date.now()}`,
-      date: new Date().toISOString().slice(0, 10),
-      status: 'ISSUED',
-      baseAmount: '40000.00',
-      vatAmount: '2800.00',
-      description: 'ใบเสร็จรับเงิน',
-      sellerSnapshot: JSON.stringify(db.financeSettings),
-      buyerSnapshot: '{}',
-      brandSnapshot: '{}',
-      replacesId: null,
-      version: 1,
+    let doc = db.financeDocuments.find((d) => d.paymentId === paymentId && d.type === 'RECEIPT')
+    if (!doc) {
+      const payment = db.financePayments.find((p) => p.id === paymentId)
+      const inv = payment ? db.financeInvoices.find((i) => i.id === payment.invoiceId) : undefined
+      const client = inv ? db.clients.find((c) => c.id === inv.clientId) : undefined
+      doc = {
+        id: `doc-${paymentId}`,
+        invoiceId: payment?.invoiceId || 'inv-1',
+        paymentId,
+        type: 'RECEIPT',
+        number: `REC-${paymentId.slice(-6)}`,
+        date: payment?.date || new Date().toISOString().slice(0, 10),
+        status: 'ISSUED',
+        baseAmount: payment?.received || '0.00',
+        vatAmount: inv?.vat || '0.00',
+        description: `ใบเสร็จรับเงินสำหรับ ${inv?.number || 'ใบแจ้งหนี้'}`,
+        sellerSnapshot: JSON.stringify({
+          businessName: db.financeSettings.businessName,
+          address: db.financeSettings.address,
+          taxId: db.financeSettings.taxId,
+          branch: db.financeSettings.branch,
+        }),
+        buyerSnapshot: client
+          ? JSON.stringify({
+              name: client.name,
+              companyName: client.companyName || client.name,
+              taxId: client.taxId || '',
+              address: client.address || '',
+            })
+          : '{}',
+        brandSnapshot: JSON.stringify({
+          brandColor: db.financeSettings.brandColor,
+          logoAssetId: db.financeSettings.logoAssetId,
+        }),
+        replacesId: null,
+        version: 1,
+      }
+      db.financeDocuments.push(doc)
+      saveMockDb(db)
     }
     return ok(doc) as ApiResponse<T>
   }

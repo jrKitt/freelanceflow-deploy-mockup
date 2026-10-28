@@ -81,7 +81,7 @@ function LoginForm() {
             }
           }}
         >
-          🚀 เข้าสู่ระบบด้วยบัญชี Demo (สำหรับนำเสนอ)
+          เข้าสู่ระบบด้วยบัญชี Demo
         </Button>
 
         <p className="auth-footer">
