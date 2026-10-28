@@ -8,6 +8,19 @@ import type {
   ReportWorkPatternData,
   ReportWorkTrendData,
 } from '../types/analytics'
+import type {
+  FinanceCategory,
+  FinanceDocument,
+  FinanceInvoice,
+  FinancePayment,
+  FinancePreset,
+  FinanceQuotation,
+  FinanceSummary,
+  FinanceTransaction,
+  SalesDocumentInput,
+} from '../services/finance'
+import type { PlannedTask, TaskPage } from '../services/dailyPlan'
+import type { AdminAccount, AdminSummary } from '../services/admin'
 import { loadMockDb, saveMockDb } from './mockData'
 
 function ok<T>(data: T, meta: ApiResponse<T>['meta'] = null, message = ''): ApiResponse<T> {
@@ -21,14 +34,18 @@ function ok<T>(data: T, meta: ApiResponse<T>['meta'] = null, message = ''): ApiR
 }
 
 export function isMockEnabled(): boolean {
-  if (typeof process !== 'undefined' && process.versions?.node) {
+  if (typeof process !== 'undefined' && process.versions?.node && !process.env.NEXT_RUNTIME) {
     return false
   }
   if (typeof window !== 'undefined') {
     const override = window.localStorage.getItem('freelanceflow:mock_mode')
     if (override !== null) return override === 'true'
   }
-  return import.meta.env?.VITE_USE_MOCK !== 'false'
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.NEXT_PUBLIC_USE_MOCK === 'false') return false
+    if (process.env.NEXT_PUBLIC_USE_MOCK === 'true') return true
+  }
+  return true
 }
 
 export function getMockToken(): string | null {
@@ -92,8 +109,7 @@ export async function handleMockRequest<T>(
   const query = new URLSearchParams(searchStr || '')
   const db = loadMockDb()
 
-  // Simulate network tick for realistic UI feedback
-  await new Promise((r) => setTimeout(r, 40))
+  await new Promise((r) => setTimeout(r, 30))
 
   // 1. AUTH
   if (pathname === '/auth/refresh' && method === 'POST') {
@@ -132,7 +148,7 @@ export async function handleMockRequest<T>(
     return ok(null) as ApiResponse<T>
   }
 
-  // 2. USER PROFILE
+  // 2. USER PROFILE & FEATURES
   if (pathname === '/users/me' && method === 'GET') {
     return ok(db.user) as ApiResponse<T>
   }
@@ -159,6 +175,20 @@ export async function handleMockRequest<T>(
 
   if (pathname === '/users/me/password' && method === 'PATCH') {
     return ok(null, null, 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว') as ApiResponse<T>
+  }
+
+  if (pathname === '/users/me/features' && method === 'GET') {
+    return ok(db.features) as ApiResponse<T>
+  }
+
+  if (pathname === '/users/me/premium-trial' && method === 'POST') {
+    db.features.trialActive = true
+    db.features.trialAvailable = false
+    db.features.trialEndsAt = new Date(Date.now() + 7 * 86400000).toISOString()
+    db.features.plan = 'PREMIUM'
+    db.features.finance = true
+    saveMockDb(db)
+    return ok({ success: true, message: 'Started premium trial' }) as ApiResponse<T>
   }
 
   // 3. CLIENTS
@@ -732,7 +762,6 @@ export async function handleMockRequest<T>(
         }
       })
 
-    // Last 7 days daily work
     const dailyWork = Array.from({ length: 7 }, (_, i) => {
       const dayOffset = 6 - i
       const d = new Date(Date.now() - dayOffset * 86400000)
@@ -951,6 +980,657 @@ export async function handleMockRequest<T>(
       })),
     }
     return ok(pattern) as ApiResponse<T>
+  }
+
+  // 10. DAILY PLANS
+  if (pathname.startsWith('/daily-plans/tasks') && method === 'GET') {
+    const search = (query.get('search') || '').toLowerCase()
+    const projFilter = query.get('projectId')
+    const page = Math.max(1, Number(query.get('page') || '1'))
+    const limit = Math.max(1, Number(query.get('limit') || '20'))
+
+    const plannedTasks: PlannedTask[] = db.tasks
+      .map((t) => {
+        const proj = db.projects.find((p) => p.id === t.projectId)
+        return {
+          id: t.id,
+          projectId: t.projectId,
+          projectName: proj?.name || 'Project',
+          name: t.name,
+          status: t.status,
+          available: t.status !== 'COMPLETED',
+        }
+      })
+      .filter((t) => {
+        if (projFilter && t.projectId !== projFilter) return false
+        if (
+          search &&
+          !t.name.toLowerCase().includes(search) &&
+          !t.projectName.toLowerCase().includes(search)
+        )
+          return false
+        return true
+      })
+
+    const start = (page - 1) * limit
+    const pageTasks = plannedTasks.slice(start, start + limit)
+    const taskPage: TaskPage = {
+      tasks: pageTasks,
+      total: plannedTasks.length,
+      page,
+      limit,
+    }
+    return ok(taskPage) as ApiResponse<T>
+  }
+
+  if (pathname === '/daily-plans/previous' && method === 'GET') {
+    const before = query.get('before') || new Date().toISOString().slice(0, 10)
+    const earlier = db.dailyPlans
+      .filter((p) => p.date < before)
+      .sort((a, b) => b.date.localeCompare(a.date))[0]
+
+    return ok(earlier || { date: '', version: 1, tasks: [] }) as ApiResponse<T>
+  }
+
+  const dailyPlanDateMatch = pathname.match(/^\/daily-plans\/([^/]+)$/)
+  if (dailyPlanDateMatch) {
+    const planDate = decodeURIComponent(dailyPlanDateMatch[1])
+    let existing = db.dailyPlans.find((p) => p.date === planDate)
+
+    if (method === 'GET') {
+      if (!existing) {
+        existing = { date: planDate, version: 1, tasks: [] }
+      }
+      return ok(existing) as ApiResponse<T>
+    }
+
+    if (method === 'PUT') {
+      const body = parseJsonBody(init)
+      const taskIds = Array.isArray(body.taskIds) ? (body.taskIds as string[]) : []
+      const tasks: PlannedTask[] = taskIds
+        .map((id) => {
+          const t = db.tasks.find((task) => task.id === id)
+          if (!t) return null
+          const proj = db.projects.find((p) => p.id === t.projectId)
+          return {
+            id: t.id,
+            projectId: t.projectId,
+            projectName: proj?.name || 'Project',
+            name: t.name,
+            status: t.status,
+            available: true,
+          }
+        })
+        .filter((t): t is PlannedTask => t !== null)
+
+      if (existing) {
+        existing.tasks = tasks
+        existing.version = (existing.version || 1) + 1
+      } else {
+        existing = {
+          date: planDate,
+          version: 1,
+          tasks,
+        }
+        db.dailyPlans.push(existing)
+      }
+      saveMockDb(db)
+      return ok(existing) as ApiResponse<T>
+    }
+  }
+
+  // 11. FINANCE SUMMARY, SETTINGS, CATEGORIES, PRESETS
+  if (pathname === '/finance/summary' && method === 'GET') {
+    const summary: FinanceSummary = {
+      income: '128400.00',
+      expenses: '18500.00',
+      net: '109900.00',
+      outstanding: '42800.00',
+      vat: '8400.00',
+      withheld: '3852.00',
+      cashByMonth: [
+        { month: '2026-08', income: '35000.00', expenses: '5000.00' },
+        { month: '2026-09', income: '45000.00', expenses: '6500.00' },
+        { month: '2026-10', income: '48400.00', expenses: '7000.00' },
+      ],
+    }
+    return ok(summary) as ApiResponse<T>
+  }
+
+  if (pathname === '/finance/settings') {
+    if (method === 'GET') {
+      return ok(db.financeSettings) as ApiResponse<T>
+    }
+    if (method === 'PUT') {
+      const body = parseJsonBody(init)
+      Object.assign(db.financeSettings, body, { version: (db.financeSettings.version || 1) + 1 })
+      saveMockDb(db)
+      return ok(db.financeSettings) as ApiResponse<T>
+    }
+  }
+
+  if (pathname === '/finance/categories') {
+    if (method === 'GET') {
+      return ok(db.financeCategories) as ApiResponse<T>
+    }
+    if (method === 'POST') {
+      const body = parseJsonBody(init)
+      const newCat: FinanceCategory = {
+        id: `cat-${Date.now()}`,
+        kind: (body.kind as 'INCOME' | 'EXPENSE') || 'EXPENSE',
+        name: (body.name as string) || 'หมวดหมู่ใหม่',
+        version: 1,
+      }
+      db.financeCategories.push(newCat)
+      saveMockDb(db)
+      return ok(newCat) as ApiResponse<T>
+    }
+  }
+
+  const categoryDeleteMatch = pathname.match(/^\/finance\/categories\/([^/]+)$/)
+  if (categoryDeleteMatch && method === 'DELETE') {
+    const catId = decodeURIComponent(categoryDeleteMatch[1])
+    db.financeCategories = db.financeCategories.filter((c) => c.id !== catId)
+    saveMockDb(db)
+    return ok(null) as ApiResponse<T>
+  }
+
+  if (pathname === '/finance/presets') {
+    if (method === 'GET') {
+      return ok(db.financePresets) as ApiResponse<T>
+    }
+    if (method === 'POST') {
+      const body = parseJsonBody(init)
+      const newPreset: FinancePreset = {
+        id: `pre-${Date.now()}`,
+        name: (body.name as string) || 'รายการแนะนำใหม่',
+        description: (body.description as string) || '',
+        quantity: (body.quantity as string) || '1',
+        unit: (body.unit as string) || 'รายการ',
+        unitPrice: (body.unitPrice as string) || '0.00',
+        suggestedVatRate: (body.suggestedVatRate as string) || '7.00',
+        version: 1,
+      }
+      db.financePresets.push(newPreset)
+      saveMockDb(db)
+      return ok(newPreset) as ApiResponse<T>
+    }
+  }
+
+  const presetMatch = pathname.match(/^\/finance\/presets\/([^/]+)$/)
+  if (presetMatch && method === 'PUT') {
+    const preId = decodeURIComponent(presetMatch[1])
+    const preset = db.financePresets.find((p) => p.id === preId)
+    if (!preset) throw { status: 404, message: 'ไม่พบ Preset' }
+    const body = parseJsonBody(init)
+    Object.assign(preset, body, { version: preset.version + 1 })
+    saveMockDb(db)
+    return ok(preset) as ApiResponse<T>
+  }
+
+  // 12. FINANCE QUOTATIONS
+  if (pathname === '/finance/quotations') {
+    if (method === 'GET') {
+      const page = Math.max(1, Number(query.get('page') || '1'))
+      const limit = Math.max(1, Number(query.get('limit') || '20'))
+      const clientId = query.get('clientId')
+      const projectId = query.get('projectId')
+      const status = query.get('status')
+
+      const filtered = db.financeQuotations.filter((q) => {
+        if (clientId && q.clientId !== clientId) return false
+        if (projectId && q.projectId !== projectId) return false
+        if (status && q.status !== status) return false
+        return true
+      })
+
+      const total = filtered.length
+      const start = (page - 1) * limit
+      const items = filtered.slice(start, start + limit)
+      return ok(items, {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      }) as ApiResponse<T>
+    }
+
+    if (method === 'POST') {
+      const body = parseJsonBody(init) as unknown as SalesDocumentInput
+      const subtotalNum = (body.lines || []).reduce(
+        (sum, l) => sum + Number(l.quantity || 1) * Number(l.unitPrice || 0),
+        0,
+      )
+      const vatNum = subtotalNum * (Number(body.vatRate || 7) / 100)
+      const totalNum = subtotalNum + vatNum
+
+      const newQuot: FinanceQuotation = {
+        id: `quot-${Date.now()}`,
+        number: `QT-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(db.financeQuotations.length + 1).padStart(3, '0')}`,
+        clientId: body.clientId,
+        projectId: body.projectId || null,
+        issueDate: body.issueDate || new Date().toISOString().slice(0, 10),
+        validUntil:
+          body.validUntil || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+        status: 'DRAFT',
+        subtotal: subtotalNum.toFixed(2),
+        discount: body.discount || '0.00',
+        vatRate: body.vatRate || '7.00',
+        vat: vatNum.toFixed(2),
+        total: totalNum.toFixed(2),
+        version: 1,
+        lines: body.lines || [],
+        sellerSnapshot: null,
+        buyerSnapshot: null,
+        brandSnapshot: null,
+        note: body.note || '',
+        invoiceId: null,
+      }
+      db.financeQuotations.unshift(newQuot)
+      saveMockDb(db)
+      return ok(newQuot) as ApiResponse<T>
+    }
+  }
+
+  const quotationMatch = pathname.match(/^\/finance\/quotations\/([^/]+)$/)
+  if (quotationMatch) {
+    const qId = decodeURIComponent(quotationMatch[1])
+    const quot = db.financeQuotations.find((q) => q.id === qId)
+    if (!quot) throw { status: 404, message: 'ไม่พบใบเสนอราคา' }
+
+    if (method === 'GET') {
+      return ok(quot) as ApiResponse<T>
+    }
+    if (method === 'PUT') {
+      const body = parseJsonBody(init) as unknown as SalesDocumentInput
+      const subtotalNum = (body.lines || []).reduce(
+        (sum, l) => sum + Number(l.quantity || 1) * Number(l.unitPrice || 0),
+        0,
+      )
+      const vatNum = subtotalNum * (Number(body.vatRate || 7) / 100)
+      const totalNum = subtotalNum + vatNum
+
+      Object.assign(quot, {
+        clientId: body.clientId ?? quot.clientId,
+        projectId: body.projectId ?? quot.projectId,
+        issueDate: body.issueDate ?? quot.issueDate,
+        validUntil: body.validUntil ?? quot.validUntil,
+        vatRate: body.vatRate ?? quot.vatRate,
+        discount: body.discount ?? quot.discount,
+        note: body.note ?? quot.note,
+        lines: body.lines ?? quot.lines,
+        subtotal: subtotalNum.toFixed(2),
+        vat: vatNum.toFixed(2),
+        total: totalNum.toFixed(2),
+        version: quot.version + 1,
+      })
+      saveMockDb(db)
+      return ok(quot) as ApiResponse<T>
+    }
+  }
+
+  const quotIssueMatch = pathname.match(/^\/finance\/quotations\/([^/]+)\/issue$/)
+  if (quotIssueMatch && method === 'POST') {
+    const qId = decodeURIComponent(quotIssueMatch[1])
+    const quot = db.financeQuotations.find((q) => q.id === qId)
+    if (!quot) throw { status: 404, message: 'ไม่พบใบเสนอราคา' }
+    quot.status = 'ISSUED'
+    quot.version++
+    saveMockDb(db)
+    return ok(quot) as ApiResponse<T>
+  }
+
+  const quotCancelMatch = pathname.match(/^\/finance\/quotations\/([^/]+)\/cancel$/)
+  if (quotCancelMatch && method === 'POST') {
+    const qId = decodeURIComponent(quotCancelMatch[1])
+    const quot = db.financeQuotations.find((q) => q.id === qId)
+    if (!quot) throw { status: 404, message: 'ไม่พบใบเสนอราคา' }
+    quot.status = 'CANCELLED'
+    quot.version++
+    saveMockDb(db)
+    return ok(quot) as ApiResponse<T>
+  }
+
+  const quotInvoiceMatch = pathname.match(/^\/finance\/quotations\/([^/]+)\/invoice$/)
+  if (quotInvoiceMatch && method === 'POST') {
+    const qId = decodeURIComponent(quotInvoiceMatch[1])
+    const quot = db.financeQuotations.find((q) => q.id === qId)
+    if (!quot) throw { status: 404, message: 'ไม่พบใบเสนอราคา' }
+
+    const newInv: FinanceInvoice = {
+      id: `inv-${Date.now()}`,
+      number: `INV-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(db.financeInvoices.length + 1).padStart(3, '0')}`,
+      clientId: quot.clientId,
+      projectId: quot.projectId,
+      issueDate: new Date().toISOString().slice(0, 10),
+      dueDate: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
+      status: 'ISSUED',
+      subtotal: quot.subtotal,
+      discount: quot.discount,
+      vatRate: quot.vatRate,
+      vat: quot.vat,
+      total: quot.total,
+      paid: '0.00',
+      version: 1,
+      lines: quot.lines,
+      sellerSnapshot: quot.sellerSnapshot,
+      buyerSnapshot: quot.buyerSnapshot,
+      brandSnapshot: quot.brandSnapshot,
+      note: quot.note,
+      taxIssuedBase: '0.00',
+      sourceQuotationId: quot.id,
+    }
+    quot.invoiceId = newInv.id
+    quot.version++
+    db.financeInvoices.unshift(newInv)
+    saveMockDb(db)
+    return ok(newInv) as ApiResponse<T>
+  }
+
+  // 13. FINANCE INVOICES
+  if (pathname === '/finance/invoices') {
+    if (method === 'GET') {
+      const page = Math.max(1, Number(query.get('page') || '1'))
+      const limit = Math.max(1, Number(query.get('limit') || '20'))
+      const clientId = query.get('clientId')
+      const projectId = query.get('projectId')
+      const status = query.get('status')
+
+      const filtered = db.financeInvoices.filter((inv) => {
+        if (clientId && inv.clientId !== clientId) return false
+        if (projectId && inv.projectId !== projectId) return false
+        if (status && inv.status !== status) return false
+        return true
+      })
+
+      const total = filtered.length
+      const start = (page - 1) * limit
+      const items = filtered.slice(start, start + limit)
+      return ok(items, {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      }) as ApiResponse<T>
+    }
+
+    if (method === 'POST') {
+      const body = parseJsonBody(init) as unknown as SalesDocumentInput
+      const subtotalNum = (body.lines || []).reduce(
+        (sum, l) => sum + Number(l.quantity || 1) * Number(l.unitPrice || 0),
+        0,
+      )
+      const vatNum = subtotalNum * (Number(body.vatRate || 7) / 100)
+      const totalNum = subtotalNum + vatNum
+
+      const newInv: FinanceInvoice = {
+        id: `inv-${Date.now()}`,
+        number: `INV-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(db.financeInvoices.length + 1).padStart(3, '0')}`,
+        clientId: body.clientId,
+        projectId: body.projectId || null,
+        issueDate: body.issueDate || new Date().toISOString().slice(0, 10),
+        dueDate: body.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
+        status: 'DRAFT',
+        subtotal: subtotalNum.toFixed(2),
+        discount: body.discount || '0.00',
+        vatRate: body.vatRate || '7.00',
+        vat: vatNum.toFixed(2),
+        total: totalNum.toFixed(2),
+        paid: '0.00',
+        version: 1,
+        lines: body.lines || [],
+        sellerSnapshot: null,
+        buyerSnapshot: null,
+        brandSnapshot: null,
+        note: body.note || '',
+        taxIssuedBase: '0.00',
+        sourceQuotationId: null,
+      }
+      db.financeInvoices.unshift(newInv)
+      saveMockDb(db)
+      return ok(newInv) as ApiResponse<T>
+    }
+  }
+
+  const invoiceMatch = pathname.match(/^\/finance\/invoices\/([^/]+)$/)
+  if (invoiceMatch) {
+    const invId = decodeURIComponent(invoiceMatch[1])
+    const inv = db.financeInvoices.find((i) => i.id === invId)
+    if (!inv) throw { status: 404, message: 'ไม่พบใบแจ้งหนี้' }
+
+    if (method === 'GET') {
+      return ok(inv) as ApiResponse<T>
+    }
+    if (method === 'PUT') {
+      const body = parseJsonBody(init) as unknown as SalesDocumentInput
+      const subtotalNum = (body.lines || []).reduce(
+        (sum, l) => sum + Number(l.quantity || 1) * Number(l.unitPrice || 0),
+        0,
+      )
+      const vatNum = subtotalNum * (Number(body.vatRate || 7) / 100)
+      const totalNum = subtotalNum + vatNum
+
+      Object.assign(inv, {
+        clientId: body.clientId ?? inv.clientId,
+        projectId: body.projectId ?? inv.projectId,
+        issueDate: body.issueDate ?? inv.issueDate,
+        dueDate: body.dueDate ?? inv.dueDate,
+        vatRate: body.vatRate ?? inv.vatRate,
+        discount: body.discount ?? inv.discount,
+        note: body.note ?? inv.note,
+        lines: body.lines ?? inv.lines,
+        subtotal: subtotalNum.toFixed(2),
+        vat: vatNum.toFixed(2),
+        total: totalNum.toFixed(2),
+        version: inv.version + 1,
+      })
+      saveMockDb(db)
+      return ok(inv) as ApiResponse<T>
+    }
+  }
+
+  const invIssueMatch = pathname.match(/^\/finance\/invoices\/([^/]+)\/issue$/)
+  if (invIssueMatch && method === 'POST') {
+    const invId = decodeURIComponent(invIssueMatch[1])
+    const inv = db.financeInvoices.find((i) => i.id === invId)
+    if (!inv) throw { status: 404, message: 'ไม่พบใบแจ้งหนี้' }
+    inv.status = 'ISSUED'
+    inv.version++
+    saveMockDb(db)
+    return ok(inv) as ApiResponse<T>
+  }
+
+  const invCancelMatch = pathname.match(/^\/finance\/invoices\/([^/]+)\/cancel$/)
+  if (invCancelMatch && method === 'POST') {
+    const invId = decodeURIComponent(invCancelMatch[1])
+    const inv = db.financeInvoices.find((i) => i.id === invId)
+    if (!inv) throw { status: 404, message: 'ไม่พบใบแจ้งหนี้' }
+    inv.status = 'CANCELLED'
+    inv.version++
+    saveMockDb(db)
+    return ok(inv) as ApiResponse<T>
+  }
+
+  // 14. FINANCE TRANSACTIONS & PAYMENTS
+  if (pathname === '/finance/transactions') {
+    if (method === 'GET') {
+      const page = Math.max(1, Number(query.get('page') || '1'))
+      const limit = Math.max(1, Number(query.get('limit') || '20'))
+      const kind = query.get('kind')
+      const category = query.get('category')
+      const projectId = query.get('projectId')
+
+      const filtered = db.financeTransactions.filter((tx) => {
+        if (kind && tx.kind !== kind) return false
+        if (category && tx.category !== category) return false
+        if (projectId && tx.projectId !== projectId) return false
+        return true
+      })
+
+      const total = filtered.length
+      const start = (page - 1) * limit
+      const items = filtered.slice(start, start + limit)
+      return ok(items, {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      }) as ApiResponse<T>
+    }
+
+    if (method === 'POST') {
+      const body = parseJsonBody(init)
+      const newTx: FinanceTransaction = {
+        id: `tx-${Date.now()}`,
+        kind: (body.kind as 'INCOME' | 'EXPENSE') || 'INCOME',
+        date: (body.date as string) || new Date().toISOString().slice(0, 10),
+        description: (body.description as string) || '',
+        category: (body.category as string) || 'ทั่วไป',
+        projectId: (body.projectId as string) || null,
+        amount: Number(body.amount || 0).toFixed(2),
+        paymentId: null,
+        cancelled: false,
+        version: 1,
+      }
+      db.financeTransactions.unshift(newTx)
+      saveMockDb(db)
+      return ok(newTx) as ApiResponse<T>
+    }
+  }
+
+  const txMatch = pathname.match(/^\/finance\/transactions\/([^/]+)$/)
+  if (txMatch && method === 'PUT') {
+    const txId = decodeURIComponent(txMatch[1])
+    const tx = db.financeTransactions.find((t) => t.id === txId)
+    if (!tx) throw { status: 404, message: 'ไม่พบรายการ' }
+    const body = parseJsonBody(init)
+    Object.assign(tx, body, { version: tx.version + 1 })
+    saveMockDb(db)
+    return ok(tx) as ApiResponse<T>
+  }
+
+  const txCancelMatch = pathname.match(/^\/finance\/transactions\/([^/]+)\/cancel$/)
+  if (txCancelMatch && method === 'POST') {
+    const txId = decodeURIComponent(txCancelMatch[1])
+    const tx = db.financeTransactions.find((t) => t.id === txId)
+    if (!tx) throw { status: 404, message: 'ไม่พบรายการ' }
+    tx.cancelled = true
+    tx.version++
+    saveMockDb(db)
+    return ok(tx) as ApiResponse<T>
+  }
+
+  if (pathname === '/finance/payments' && method === 'POST') {
+    const body = parseJsonBody(init)
+    const inv = db.financeInvoices.find((i) => i.id === body.invoiceId)
+    if (inv) {
+      const newPaid = Number(inv.paid) + Number(body.received || 0)
+      inv.paid = newPaid.toFixed(2)
+      if (newPaid >= Number(inv.total)) {
+        inv.status = 'PAID'
+      } else if (newPaid > 0) {
+        inv.status = 'PARTIALLY_PAID'
+      }
+      inv.version++
+    }
+
+    const payment: FinancePayment = {
+      id: `pay-${Date.now()}`,
+      invoiceId: (body.invoiceId as string) || '',
+      date: (body.date as string) || new Date().toISOString().slice(0, 10),
+      received: Number(body.received || 0).toFixed(2),
+      withheld: Number(body.withheld || 0).toFixed(2),
+      method: (body.method as string) || 'TRANSFER',
+      reference: (body.reference as string) || '',
+      withholdingCertificate: (body.withholdingCertificate as string) || '',
+      cancelled: false,
+      version: 1,
+    }
+
+    // Also add to transactions as INCOME
+    db.financeTransactions.unshift({
+      id: `tx-pay-${payment.id}`,
+      kind: 'INCOME',
+      date: payment.date,
+      description: `รับชำระเงินใบแจ้งหนี้ ${inv?.number || ''}`,
+      category: 'ค่าบริการพัฒนาซอฟต์แวร์',
+      projectId: inv?.projectId || null,
+      amount: payment.received,
+      paymentId: payment.id,
+      cancelled: false,
+      version: 1,
+    })
+
+    saveMockDb(db)
+    return ok(payment) as ApiResponse<T>
+  }
+
+  const docReceiptMatch = pathname.match(/^\/finance\/documents\/receipt\/([^/]+)$/)
+  if (docReceiptMatch && method === 'GET') {
+    const paymentId = decodeURIComponent(docReceiptMatch[1])
+    const doc: FinanceDocument = {
+      id: `doc-${paymentId}`,
+      invoiceId: 'inv-1',
+      paymentId,
+      type: 'RECEIPT',
+      number: `REC-${Date.now()}`,
+      date: new Date().toISOString().slice(0, 10),
+      status: 'ISSUED',
+      baseAmount: '40000.00',
+      vatAmount: '2800.00',
+      description: 'ใบเสร็จรับเงิน',
+      sellerSnapshot: JSON.stringify(db.financeSettings),
+      buyerSnapshot: '{}',
+      brandSnapshot: '{}',
+      replacesId: null,
+      version: 1,
+    }
+    return ok(doc) as ApiResponse<T>
+  }
+
+  // 15. ADMIN
+  if (pathname === '/admin/features') {
+    if (method === 'GET') {
+      return ok(db.adminFeatures) as ApiResponse<T>
+    }
+    if (method === 'PATCH') {
+      const body = parseJsonBody(init)
+      db.adminFeatures.premiumEnforced = Boolean(body.premiumEnforced)
+      db.adminFeatures.version = (db.adminFeatures.version || 1) + 1
+      saveMockDb(db)
+      return ok(db.adminFeatures) as ApiResponse<T>
+    }
+  }
+
+  if (pathname === '/admin/summary' && method === 'GET') {
+    const summary: AdminSummary = {
+      total: db.adminUsers.length,
+      activeFree: db.adminUsers.filter((u) => u.plan === 'FREE' && u.active).length,
+      activePremium: db.adminUsers.filter((u) => u.plan === 'PREMIUM' && u.active).length,
+      newThisMonth: 1,
+      signups: [
+        { month: '2026-08', count: 12 },
+        { month: '2026-09', count: 18 },
+        { month: '2026-10', count: 24 },
+      ],
+    }
+    return ok(summary) as ApiResponse<T>
+  }
+
+  if (pathname === '/admin/users' && method === 'GET') {
+    return ok(db.adminUsers) as ApiResponse<T>
+  }
+
+  const adminPlanMatch = pathname.match(/^\/admin\/users\/([^/]+)\/plan$/)
+  if (adminPlanMatch && method === 'PATCH') {
+    const userId = decodeURIComponent(adminPlanMatch[1])
+    const user = db.adminUsers.find((u) => u.id === userId)
+    if (!user) throw { status: 404, message: 'ไม่พบผู้ใช้' }
+    const body = parseJsonBody(init)
+    user.plan = (body.plan as AdminAccount['plan']) || user.plan
+    user.version = (user.version || 1) + 1
+    saveMockDb(db)
+    return ok(user) as ApiResponse<T>
   }
 
   // Fallback for unhandled routes

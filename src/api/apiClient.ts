@@ -2,7 +2,7 @@ import type { ApiMeta, ApiOptions, ApiResponse, ApiResponseError, JsonMethod } f
 import { ApiError } from './apiError'
 import { getMockToken, handleMockRequest, isMockEnabled, setMockToken } from '../mock/mockApi'
 
-const apiBase = (import.meta.env?.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
+const apiBase = '/api'
 let accessToken: string | null = null
 let refreshInFlight: Promise<boolean> | null = null
 let refreshRevision = 0
@@ -128,6 +128,11 @@ export function getApiToken(): string | null {
   return accessToken
 }
 
+// Explicit sign-in takes precedence over an initial session refresh still in flight.
+export function supersedePendingRefresh(): void {
+  tokenRevision++
+}
+
 export function setApiToken(token: string | null): void {
   tokenRevision++
   accessToken = token
@@ -249,7 +254,14 @@ async function request<T>(
     } catch {
       /* The server did not return JSON. */
     }
-    throw createApiError(body, response.status, `API error (${response.status})`)
+    const error = createApiError(body, response.status, `API error (${response.status})`)
+    if (
+      response.status === 403 &&
+      error.code === 'FINANCE_PREMIUM_REQUIRED' &&
+      typeof window !== 'undefined'
+    )
+      window.dispatchEvent(new Event('freelanceflow-finance-revoked'))
+    throw error
   }
   if (response.status === 204 || response.status === 205) {
     return {
@@ -264,7 +276,7 @@ async function request<T>(
   const body: unknown = await response.json()
   const normalized = normalizeResponse<T>(body)
   if (!normalized.success)
-    throw createApiError(normalized, response.status, 'API ไม่สามารถดำเนินการได้')
+    throw createApiError(normalized, response.status, 'API Could not complete action')
   return normalized
 }
 

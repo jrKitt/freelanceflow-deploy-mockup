@@ -6,6 +6,17 @@ import type {
   ApiTimeEntry,
   ApiUser,
 } from '../types/api'
+import type {
+  FinanceCategory,
+  FinanceInvoice,
+  FinancePreset,
+  FinanceQuotation,
+  FinanceSettings,
+  FinanceTransaction,
+} from '../services/finance'
+import type { DailyPlan } from '../services/dailyPlan'
+import type { AdminAccount, FeatureSettings } from '../services/admin'
+import type { Features } from '../Features/FeaturesContext'
 
 export interface MockDatabase {
   user: ApiUser
@@ -15,9 +26,19 @@ export interface MockDatabase {
   timeEntries: ApiTimeEntry[]
   currentTimer: ApiCurrentTimer
   authToken: string | null
+  features: Features
+  adminFeatures: FeatureSettings
+  adminUsers: AdminAccount[]
+  dailyPlans: DailyPlan[]
+  financeSettings: FinanceSettings
+  financeQuotations: FinanceQuotation[]
+  financeInvoices: FinanceInvoice[]
+  financeTransactions: FinanceTransaction[]
+  financeCategories: FinanceCategory[]
+  financePresets: FinancePreset[]
 }
 
-const STORAGE_KEY = 'freelanceflow:mock_db_v1'
+const STORAGE_KEY = 'freelanceflow:mock_db_v2'
 
 function getDaysAgo(days: number, timeStr = '09:00:00'): string {
   const d = new Date(Date.now() - days * 86400000)
@@ -209,7 +230,6 @@ export function createInitialMockData(): MockDatabase {
   ]
 
   const tasks: ApiTask[] = [
-    // Project 1 Tasks
     {
       id: 'task-1-1',
       projectId: 'proj-1',
@@ -260,8 +280,6 @@ export function createInitialMockData(): MockDatabase {
       createdAt: getDaysAgo(8),
       updatedAt: getDaysAgo(8),
     },
-
-    // Project 2 Tasks
     {
       id: 'task-2-1',
       projectId: 'proj-2',
@@ -292,8 +310,6 @@ export function createInitialMockData(): MockDatabase {
       createdAt: getDaysAgo(10),
       updatedAt: getDaysAgo(10),
     },
-
-    // Project 3 Tasks
     {
       id: 'task-3-1',
       projectId: 'proj-3',
@@ -476,6 +492,264 @@ export function createInitialMockData(): MockDatabase {
     timeEntry: null,
   }
 
+  const features: Features = {
+    plan: 'PREMIUM',
+    finance: true,
+    premiumEnforced: false,
+    trialActive: false,
+    trialEndsAt: null,
+    trialAvailable: true,
+  }
+
+  const adminFeatures: FeatureSettings = {
+    premiumEnforced: false,
+    version: 1,
+  }
+
+  const adminUsers: AdminAccount[] = [
+    {
+      id: 'user-demo-01',
+      displayName: 'วรเมธ ศิริโภคาสกุล (Demo)',
+      email: 'demo@freelanceflow.dev',
+      createdAt: '2026-01-01T08:00:00Z',
+      active: true,
+      role: 'ADMIN',
+      plan: 'PREMIUM',
+      version: 1,
+    },
+    {
+      id: 'user-02',
+      displayName: 'กิตติศักดิ์ เจริญพร',
+      email: 'kittisak@example.com',
+      createdAt: '2026-02-15T10:00:00Z',
+      active: true,
+      role: 'USER',
+      plan: 'FREE',
+      version: 1,
+    },
+  ]
+
+  const todayStr = getDateStr(0)
+  const yesterdayStr = getDateStr(1)
+
+  const dailyPlans: DailyPlan[] = [
+    {
+      date: todayStr,
+      version: 1,
+      tasks: [
+        {
+          id: 'task-1-4',
+          projectId: 'proj-1',
+          projectName: 'Redesign เว็บไซต์ E-Commerce v2.0',
+          name: 'เชื่อมต่อระบบ Payment Gateway (PromptPay QR & บัตรเครดิต)',
+          status: 'IN_PROGRESS',
+          available: true,
+        },
+        {
+          id: 'task-2-2',
+          projectId: 'proj-2',
+          projectName: 'แอปพลิเคชัน Loyalty Points & Coffee Rewards',
+          name: 'พัฒนาฟังก์ชันสร้าง Dynamic QR Code สำหรับพนักงานสแกน',
+          status: 'IN_PROGRESS',
+          available: true,
+        },
+      ],
+    },
+    {
+      date: yesterdayStr,
+      version: 1,
+      tasks: [
+        {
+          id: 'task-1-3',
+          projectId: 'proj-1',
+          projectName: 'Redesign เว็บไซต์ E-Commerce v2.0',
+          name: 'เชื่อมต่อ API คูปองส่วนลดและระบบคำนวณค่าจัดส่ง',
+          status: 'COMPLETED',
+          available: true,
+        },
+      ],
+    },
+  ]
+
+  const financeSettings: FinanceSettings = {
+    businessName: 'วรเมธ ดิจิทัล โซลูชั่นส์',
+    address: '99/1 ถนนสุขุมวิท คลองเตย กรุงเทพมหานคร 10110',
+    taxId: '1234567890123',
+    branch: 'สำนักงานใหญ่',
+    vatRegistered: true,
+    bankDetails: 'ธนาคารกสิกรไทย 123-4-56789-0 ชื่อบัญชี วรเมธ ศิริโภคาสกุล',
+    footer: 'ขอบคุณที่ไว้วางใจใช้บริการ FreelanceFlow',
+    brandColor: '#2563EB',
+    logoAssetId: null,
+    version: 1,
+  }
+
+  const financeQuotations: FinanceQuotation[] = [
+    {
+      id: 'quot-1',
+      number: 'QT-202610-001',
+      clientId: 'client-1',
+      projectId: 'proj-1',
+      issueDate: getDateStr(20),
+      validUntil: getDateStr(-10),
+      status: 'ISSUED',
+      subtotal: '80000.00',
+      discount: '0.00',
+      vatRate: '7.00',
+      vat: '5600.00',
+      total: '85600.00',
+      version: 1,
+      lines: [
+        {
+          description: 'บริการพัฒนาและปรับโฉม UX/UI เว็บไซต์ E-Commerce v2.0',
+          quantity: '1',
+          unit: 'โครงการ',
+          unitPrice: '80000.00',
+          amount: '80000.00',
+        },
+      ],
+      sellerSnapshot: null,
+      buyerSnapshot: null,
+      brandSnapshot: null,
+      note: 'เงื่อนไขการชำระเงิน: มัดจำ 50% ก่อนเริ่มงาน ส่วนที่เหลือ 50% เมื่อส่งมอบงานสมบูรณ์',
+      invoiceId: 'inv-1',
+    },
+    {
+      id: 'quot-2',
+      number: 'QT-202610-002',
+      clientId: 'client-3',
+      projectId: 'proj-2',
+      issueDate: getDateStr(15),
+      validUntil: getDateStr(-15),
+      status: 'ISSUED',
+      subtotal: '40000.00',
+      discount: '0.00',
+      vatRate: '7.00',
+      vat: '2800.00',
+      total: '42800.00',
+      version: 1,
+      lines: [
+        {
+          description: 'พัฒนาแอปพลิเคชันสะสมแต้ม Loyalty Points & Coffee Rewards',
+          quantity: '1',
+          unit: 'ระบบ',
+          unitPrice: '40000.00',
+          amount: '40000.00',
+        },
+      ],
+      sellerSnapshot: null,
+      buyerSnapshot: null,
+      brandSnapshot: null,
+      note: 'รวมการทดสอบระบบและเชื่อมต่อ LINE Official Account',
+      invoiceId: null,
+    },
+  ]
+
+  const financeInvoices: FinanceInvoice[] = [
+    {
+      id: 'inv-1',
+      number: 'INV-202610-001',
+      clientId: 'client-1',
+      projectId: 'proj-1',
+      issueDate: getDateStr(10),
+      dueDate: getDateStr(-5),
+      status: 'ISSUED',
+      subtotal: '40000.00',
+      discount: '0.00',
+      vatRate: '7.00',
+      vat: '2800.00',
+      total: '42800.00',
+      paid: '0.00',
+      version: 1,
+      lines: [
+        {
+          description: 'งวดที่ 1 (มัดจำ 50%) - โครงการ E-Commerce Redesign',
+          quantity: '1',
+          unit: 'งวด',
+          unitPrice: '40000.00',
+          amount: '40000.00',
+        },
+      ],
+      sellerSnapshot: null,
+      buyerSnapshot: null,
+      brandSnapshot: null,
+      note: 'โอนเงินผ่าน ธ.กสิกรไทย เลขบัญชี 123-4-56789-0',
+      taxIssuedBase: '0.00',
+      sourceQuotationId: 'quot-1',
+    },
+  ]
+
+  const financeTransactions: FinanceTransaction[] = [
+    {
+      id: 'tx-1',
+      kind: 'INCOME',
+      date: getDateStr(5),
+      description: 'รับชำระเงินค่ามัดจำงวดแรก - ออกแบบ Brand Identity',
+      category: 'ค่าบริการออกแบบกราฟิก',
+      projectId: 'proj-3',
+      amount: '30000.00',
+      paymentId: null,
+      cancelled: false,
+      version: 1,
+    },
+    {
+      id: 'tx-2',
+      kind: 'EXPENSE',
+      date: getDateStr(8),
+      description: 'ค่าบริการ Cloud Server & Domain Hosting',
+      category: 'เซิร์ฟเวอร์และโฮสติ้ง',
+      projectId: 'proj-1',
+      amount: '2500.00',
+      paymentId: null,
+      cancelled: false,
+      version: 1,
+    },
+    {
+      id: 'tx-3',
+      kind: 'EXPENSE',
+      date: getDateStr(12),
+      description: 'ค่าบริการ Figma Organization License รายเดือน',
+      category: 'ซอฟต์แวร์และเครื่องมือ (SaaS)',
+      projectId: null,
+      amount: '1200.00',
+      paymentId: null,
+      cancelled: false,
+      version: 1,
+    },
+  ]
+
+  const financeCategories: FinanceCategory[] = [
+    { id: 'cat-1', kind: 'INCOME', name: 'ค่าบริการพัฒนาซอฟต์แวร์', version: 1 },
+    { id: 'cat-2', kind: 'INCOME', name: 'ค่าบริการออกแบบกราฟิก', version: 1 },
+    { id: 'cat-3', kind: 'INCOME', name: 'ค่าที่ปรึกษาด้านไอที', version: 1 },
+    { id: 'cat-4', kind: 'EXPENSE', name: 'เซิร์ฟเวอร์และโฮสติ้ง', version: 1 },
+    { id: 'cat-5', kind: 'EXPENSE', name: 'ซอฟต์แวร์และเครื่องมือ (SaaS)', version: 1 },
+    { id: 'cat-6', kind: 'EXPENSE', name: 'อุปกรณ์ฮาร์ดแวร์และการทำงาน', version: 1 },
+  ]
+
+  const financePresets: FinancePreset[] = [
+    {
+      id: 'pre-1',
+      name: 'พัฒนา Web Application (Daily Rate)',
+      description: 'บริการพัฒนา Frontend / Backend ต่อวัน',
+      quantity: '1',
+      unit: 'วัน',
+      unitPrice: '5000.00',
+      suggestedVatRate: '7.00',
+      version: 1,
+    },
+    {
+      id: 'pre-2',
+      name: 'ออกแบบ UI/UX Design System',
+      description: 'สร้าง Component Library ใน Figma',
+      quantity: '1',
+      unit: 'โปรเจกต์',
+      unitPrice: '25000.00',
+      suggestedVatRate: '7.00',
+      version: 1,
+    },
+  ]
+
   return {
     user,
     clients,
@@ -484,6 +758,16 @@ export function createInitialMockData(): MockDatabase {
     timeEntries,
     currentTimer,
     authToken: 'mock-jwt-token-demo',
+    features,
+    adminFeatures,
+    adminUsers,
+    dailyPlans,
+    financeSettings,
+    financeQuotations,
+    financeInvoices,
+    financeTransactions,
+    financeCategories,
+    financePresets,
   }
 }
 
@@ -496,7 +780,23 @@ export function loadMockDb(): MockDatabase {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(initial))
       return initial
     }
-    return JSON.parse(raw) as MockDatabase
+    const parsed = JSON.parse(raw) as Partial<MockDatabase>
+    // Ensure newly added arrays/objects are populated
+    const initial = createInitialMockData()
+    return {
+      ...initial,
+      ...parsed,
+      features: parsed.features || initial.features,
+      adminFeatures: parsed.adminFeatures || initial.adminFeatures,
+      adminUsers: parsed.adminUsers || initial.adminUsers,
+      dailyPlans: parsed.dailyPlans || initial.dailyPlans,
+      financeSettings: parsed.financeSettings || initial.financeSettings,
+      financeQuotations: parsed.financeQuotations || initial.financeQuotations,
+      financeInvoices: parsed.financeInvoices || initial.financeInvoices,
+      financeTransactions: parsed.financeTransactions || initial.financeTransactions,
+      financeCategories: parsed.financeCategories || initial.financeCategories,
+      financePresets: parsed.financePresets || initial.financePresets,
+    }
   } catch {
     return createInitialMockData()
   }

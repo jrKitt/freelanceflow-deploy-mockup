@@ -1,9 +1,10 @@
+import { DEFAULT_RECORD_COLOR } from '../../../constants/colors'
 import { Card } from '../../../components/ui/card'
 import { Button } from '../../../components/ui/button'
 import { NativeSelect } from '../../../components/ui/native-select'
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { FiPlus, FiUsers } from 'react-icons/fi'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../../components/ui/sheet'
 import PageHeader from '../../../components/PageHeader'
 import { EmptyState, ErrorState, LoadingState } from '../../../components/ViewState'
 import { useClients } from '../../useClients'
@@ -41,7 +42,7 @@ const emptyForm: ClientInput = {
   tax_id: '',
   notes: '',
   status: 'ACTIVE',
-  color: '#4F6BFF',
+  color: DEFAULT_RECORD_COLOR,
 }
 
 function toClientForm(value: Partial<ClientInput> = {}): ClientInput {
@@ -60,7 +61,7 @@ function toClientForm(value: Partial<ClientInput> = {}): ClientInput {
     tax_id: value.tax_id ?? '',
     notes: value.notes ?? '',
     status: value.status ?? 'ACTIVE',
-    color: value.color ?? '#4F6BFF',
+    color: value.color ?? DEFAULT_RECORD_COLOR,
   }
 }
 
@@ -115,7 +116,7 @@ function ClientsPage() {
             key: pageQueryKey,
             clients: [],
             meta: { page, limit: clientPageLimit, total: 0, totalPages: 1 },
-            error: getErrorMessage(loadError, 'ไม่สามารถโหลดรายชื่อลูกค้าได้'),
+            error: getErrorMessage(loadError, 'Could not load clients'),
           })
       })
     return () => {
@@ -176,7 +177,7 @@ function ClientsPage() {
       if (page === 1) setPageRequestKey((current) => current + 1)
       else setPage(1)
     } catch (err) {
-      setFormError(getErrorMessage(err, 'บันทึกลูกค้าไม่สำเร็จ'))
+      setFormError(getErrorMessage(err, 'Could not save client'))
     } finally {
       setSaving(false)
     }
@@ -188,11 +189,11 @@ function ClientsPage() {
       else await archiveClient(client.id)
       setPageRequestKey((current) => current + 1)
     } catch (reason: unknown) {
-      toast.error(getErrorMessage(reason, 'ไม่สามารถเก็บถาวรลูกค้าได้'))
+      toast.error(getErrorMessage(reason, 'Could not archive client'))
     }
   }
 
-  if (loading || pageLoading) return <LoadingState label="กำลังโหลดรายชื่อลูกค้า..." />
+  if (loading || pageLoading) return <LoadingState label="Loading clients…" />
   if (error || pageError)
     return (
       <ErrorState
@@ -207,10 +208,10 @@ function ClientsPage() {
   return (
     <div className="mx-auto w-full max-w-auto">
       <PageHeader
-        title="ลูกค้า"
+        title="Clients"
         actions={
           <Button variant="default" className="h-10" type="button" onClick={openCreate}>
-            <FiPlus aria-hidden="true" /> เพิ่มลูกค้า
+            <FiPlus aria-hidden="true" /> Add client
           </Button>
         }
       />
@@ -222,8 +223,8 @@ function ClientsPage() {
           setQuery(searchInput.trim())
           setPage(1)
         }}
-        placeholder="ค้นหาชื่อ บริษัท อีเมล หรือเบอร์โทร"
-        searchAriaLabel="ค้นหาลูกค้า"
+        placeholder="Search name, company, email, or phone"
+        searchAriaLabel="Search clients"
       >
         <NativeSelect
           value={status}
@@ -231,11 +232,11 @@ function ClientsPage() {
             setStatus(event.target.value as ClientFilter)
             setPage(1)
           }}
-          aria-label="กรองสถานะลูกค้า"
+          aria-label="Filter client status"
         >
-          <option value="ALL">ทุกสถานะ</option>
-          <option value="ACTIVE">ใช้งานอยู่</option>
-          <option value="ARCHIVED">เก็บถาวร</option>
+          <option value="ALL">All statuses</option>
+          <option value="ACTIVE">Active</option>
+          <option value="ARCHIVED">Archived</option>
         </NativeSelect>
         <NativeSelect
           value={sortBy}
@@ -243,11 +244,11 @@ function ClientsPage() {
             setSortBy(event.target.value as ClientSort)
             setPage(1)
           }}
-          aria-label="เรียงลำดับลูกค้า"
+          aria-label="Sort clients"
         >
-          <option value="UPDATED_DESC">อัปเดตล่าสุด</option>
-          <option value="NAME_ASC">ชื่อ A–Z</option>
-          <option value="CREATED_ASC">เก่าที่สุด</option>
+          <option value="UPDATED_DESC">Recently updated</option>
+          <option value="NAME_ASC">Name A–Z</option>
+          <option value="CREATED_ASC">Oldest</option>
         </NativeSelect>
       </FilterBar>
 
@@ -256,11 +257,11 @@ function ClientsPage() {
           <section className="p-4 sm:p-6">
             <EmptyState
               icon={<FiUsers aria-hidden="true" />}
-              title="ยังไม่พบลูกค้า"
-              description="เพิ่มลูกค้ารายแรกหรือเปลี่ยนคำค้นหาและตัวกรอง"
+              title="No clients found"
+              description="Add your first client or change the search and filters."
               action={
                 <Button variant="default" className="h-10" type="button" onClick={openCreate}>
-                  เพิ่มลูกค้า
+                  Add client
                 </Button>
               }
             />
@@ -298,16 +299,16 @@ function ClientsPage() {
         className="mt-6"
       />
 
-      <Dialog
+      <Sheet
         open={modalOpen}
         onOpenChange={(open) => {
           if (!open) setModalOpen(false)
         }}
       >
-        <DialogContent className="max-h-[calc(100dvh-2rem)] !max-w-4xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{form.id ? 'แก้ไขข้อมูลลูกค้า' : 'เพิ่มลูกค้า'}</DialogTitle>
-          </DialogHeader>
+        <SheetContent className="!w-full !max-w-full overflow-y-auto p-4 sm:!w-[640px] sm:!max-w-[640px] sm:p-6">
+          <SheetHeader className="p-0 pr-10">
+            <SheetTitle>{form.id ? 'Edit client' : 'Add client'}</SheetTitle>
+          </SheetHeader>
           <ClientForm
             value={form}
             error={formError}
@@ -317,8 +318,8 @@ function ClientsPage() {
             onSubmit={handleSubmit}
             onCancel={() => setModalOpen(false)}
           />
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
