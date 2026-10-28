@@ -39,3 +39,4 @@ playwright-report/
 .open-next/
 .wrangler/
 .dev.vars
+worker-configuration.d.ts
