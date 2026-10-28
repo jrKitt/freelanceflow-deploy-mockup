@@ -4,7 +4,7 @@ import { Toaster } from '../components/ui/sonner'
 import { ThemeProvider } from 'next-themes'
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    <ThemeProvider attribute="class" defaultTheme="light" forcedTheme="light" enableSystem={false} disableTransitionOnChange>
       <AuthProvider>
         {children}
         <Toaster richColors closeButton />
