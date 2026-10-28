@@ -34,3 +34,8 @@ playwright-report/
 
 # Isolated browser-test builds
 /.next-*/
+
+# Cloudflare OpenNext & Wrangler
+.open-next/
+.wrangler/
+.dev.vars

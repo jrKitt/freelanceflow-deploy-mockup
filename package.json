@@ -1,11 +1,13 @@
 {
-  "name": "freelanceflow-frontend",
+  "name": "freelanceflow",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "next dev -p 5174",
     "build": "next build",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node scripts/test.mjs",
@@ -35,6 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@opennextjs/cloudflare": "^1.20.13",
     "@playwright/test": "^1.64.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/jsdom": "^30.0.0",
@@ -50,7 +53,8 @@
     "prettier": "^3.9.9",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.0"
+    "typescript-eslint": "^8.71.0",
+    "wrangler": "^4.154.0"
   },
   "allowScripts": {
     "esbuild@0.28.2": true
